@@ -88,6 +88,11 @@ function ponyget_CPU_Usage()
     printf %.1f%% "$(top -b -n1 | grep "Cpu(s):" | sed -r -e "s/^[^0-9]+//" -e "s/[^0-9]+,\s+/ + /g" -e "s/[^0-9]+$//" | cut -d ' ' -f 1-5 | bc)"
 }
 
+function ponyget_CPU_Temperature()
+{
+    echo "$(echo "scale=1; $(cat /sys/devices/virtual/thermal/thermal_zone0/temp) / 1000" | bc) C"
+}
+
 function ponyget_Uptime()
 {
     uptime | grep -oE "up.*user" | \
