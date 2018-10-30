@@ -23,6 +23,8 @@ UNINSTALL_FILE=$(UNINSTALL_FILE)
 REMOVE_DIR=$(foreach d, $(1), [ -d $(d) ] && rmdir $(d) || true;)
 MAKE_DIR=mkdir -p
 
+.SUFFIXES:
+
 # NOTE: not .PONY :-P
 .PHONY: all show show_deps clean list random install uninstall touchput
 
@@ -32,7 +34,6 @@ define rule_single_output
 $(OUT_DIR)/$(2)/$(1).$(2): | $(dir $(OUT_DIR)/$(2)/$(1))
 $(OUT_DIR)/$(2)/$(1).$(2): $(call find_deps, $(1))
 $(OUT_DIR)/$(2)/$(1).$(2): $(PONY_DIR)/$(1)
-$(OUT_DIR)/$(2)/$(1).$(2): $(SCRIPT_INTERPRETER)
 	$(SCRIPT_INTERPRETER) $(SCRIPT) -i $(PONY_DIR)/$(1) -o $(OUT_DIR)/$(2)/$(1).$(2)
 endef
 
