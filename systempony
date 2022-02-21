@@ -122,7 +122,7 @@ function ponyget_Disk()
 {
     local dfoption=$FSTYPE
     [ "$dfoption" ] && dfoption="-t $FSTYPE"
-    local diskusage=$(df -lh $dfoption --total | tail -n 1 | sed -r "s/ +/\t/g" )
+    local diskusage=$(df -lh $dfoption -x overlay -x tmpfs -x devtmpfs --total | tail -n 1 | sed -r "s/ +/\t/g" )
     local used=$(echo "$diskusage" | cut -f 3)
     local total=$(echo "$diskusage" | cut -f 2)
     local percent=$(echo "$diskusage"  | cut -f 5 | sed s/%// )
