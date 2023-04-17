@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/pkg/bin/bash
 
 # These global variables can be overridden by config
 # Name of the pony
@@ -8,7 +8,7 @@ INFO=(User Hostname IP Distro Kernel Uptime Load Shell Packages CPU Threads RAM 
 # File system type to show disk usage (default/empty=all) (see df for specific values)
 FSTYPE=
 # Interface to get the IP address from
-IP_INTERFACE="eth0"
+IP_INTERFACE="fxp0"
 
 function ponyget_Shell()
 {
@@ -22,12 +22,12 @@ function ponyget_User()
 
 function ponyget_Distro()
 {
-    lsb_release -isr | paste "-d " - -
+    echo "NetBSD"
 }
 
 function pccolor()
 {
-    local color="32";
+    local color="32"
     if [ "$1" -gt 66 ]
     then
         color="31"
@@ -35,37 +35,29 @@ function pccolor()
     then
         color="33"
     fi
-    echo -e "\x1b[$color;1m"
+    printf "\033[${color};1m"
 }
 
 function ponyget_RAM()
 {
-    local ramtable=$(free -h | head -n -1)
-    local used=$(echo "$ramtable" | tail -n 1 | sed -r "s/ +/\t/g"  | cut -f 3)
-    local total=$(echo "$ramtable" | sed -n 2p | sed -r "s/ +/\t/g"  | cut -f 2)
-
-    ramtable=$(free -m | head -n -1)
-    local used_M=$(echo "$ramtable" | tail -n 1 | sed -r "s/ +/\t/g"  | cut -f 3)
-    local total_M=$(echo "$ramtable" | sed -n 2p | sed -r "s/ +/\t/g"  | cut -f 2)
-    let percent="$used_M * 100 / $total_M"
-
-
-    echo -e "$(pccolor $percent)$used\x1b[0m / $total"
+    local used=$(vmstat -s | grep 'pages active' | awk '{print $1}')
+    local total=$(vmstat -s | grep 'pages managed' | awk '{print $1}')
+    local percent=$(echo "scale=2; 100*$used/$total" | bc)
+    local percentInt=$(echo "$percent" | cut -d. -f1)
+    printf "$(pccolor $percentInt)%.2f%%\x1b[0m / %s\n" "$percent" "$(echo "$total * 4096" | bc)"
 }
 
 function ponyget_Swap()
 {
-    local swaptable=$(free -h | grep Swap)
-    local used=$(echo "$swaptable" | sed -r "s/ +/\t/g"  | cut -f 3)
-    local total=$(echo "$swaptable" | sed -r "s/ +/\t/g"  | cut -f 2)
-
-    swaptable=$(free -m | grep Swap)
-    local used_M=$(echo "$swaptable" | sed -r "s/ +/\t/g"  | cut -f 3)
-    local total_M=$(echo "$swaptable" | sed -r "s/ +/\t/g"  | cut -f 2)
-    let percent="$used_M * 100 / $total_M"
-
-
-    echo -e "$(pccolor $percent)$used\x1b[0m / $total"
+    local used=$(vmstat -s | grep 'swap pages in use' | awk '{print $1}')
+    local total=$(vmstat -s | grep -E 'swap pages$' | awk '{print $1}')
+    local percent=0
+    if [ "$total" -ne "0" ]
+    then
+        percent=$(echo "scale=2; 100*$used/$total" | bc)
+    fi
+    local percentInt=$(echo "scale=0; $percent" | bc)
+    printf "$(pccolor $percentInt)%.2f%%\x1b[0m / %s\n" "$percent" "$(echo "$total * 4096" | bc)"
 }
 
 function ponyget_Kernel()
@@ -80,59 +72,50 @@ function ponyget_Hostname()
 
 function ponyget_CPU()
 {
-    cat /proc/cpuinfo | grep "model name" | head -n 1 | sed -r "s/model name\s: //"
+    sysctl -n machdep.cpu_brand
 }
 
 function ponyget_Threads()
 {
-    nproc --all
+    sysctl -n hw.ncpu
 }
 
 function ponyget_CPU_Usage()
 {
-    printf %.1f%% "$(top -b -n1 | grep "Cpu(s):" | sed -r -e "s/^[^0-9]+//" -e "s/[^0-9]+,\s+/ + /g" -e "s/[^0-9]+$//" | cut -d ' ' -f 1-5 | bc)"
+    sysctl -n kern.cp_time | awk '{usage=100-($4*100)/($1+$2+$3+$4+$5+$6+$7+$8)} END {print usage}'
 }
 
 function ponyget_CPU_Temperature()
 {
-    echo "$(echo "scale=1; $(cat /sys/devices/virtual/thermal/thermal_zone0/temp) / 1000" | bc) C"
+    sysctl -n hw.sensors.cpu0.temp0
 }
 
 function ponyget_Uptime()
 {
-    uptime | grep -oE "up.*user" | \
-        sed -r -e "s/up\s*(.+),\s*[0-9]+\s*user/\1/" -e "s/\s+/ /g"
+    uptime | awk -F',|:' '{if ($7 == "days") printf "%d days, %d hours, %d minutes", $3, $5, $6; else printf "%d hours, %d minutes", $3, $4}'
 }
 
 function ponyget_Load()
 {
-    uptime | sed -r -e "s/.*load average:\s*//"
+    uptime | awk -F'load averages:' '{print $2}' | awk '{$1=$1};1'
 }
 
 function ponyget_Packages()
 {
-    if which dpkg &>/dev/null
-    then
-        dpkg --get-selections | grep -v deinstall | wc -l
-    elif which rpm &>/dev/null
-    then
-        rpm -qa | wc -l
-    elif which pacman &>/dev/null
-    then
-        pacman -Q | wc -l
-    fi
+    pkg_info | wc -l | awk '{$1=$1};1'
 }
 
 function ponyget_Disk()
 {
-    local dfoption=$FSTYPE
+    local dfoption="$FSTYPE"
     [ "$dfoption" ] && dfoption="-t $FSTYPE"
-    local diskusage=$(df -lh $dfoption -x overlay -x tmpfs -x devtmpfs --total | tail -n 1 | sed -r "s/ +/\t/g" )
+    local diskusage=$(df -lh $dfoption | grep raid0a | awk '{ gsub(/ +/,"\t"); print }')
     local used=$(echo "$diskusage" | cut -f 3)
     local total=$(echo "$diskusage" | cut -f 2)
-    local percent=$(echo "$diskusage"  | cut -f 5 | sed s/%// )
+    local percent=$(echo "$diskusage" | cut -f 5 | sed s/%//)
+    local percentInt=$(echo "$percent" | cut -d. -f1)
 
-    echo -e "$(pccolor $percent)$used\x1b[0m / $total"
+    echo -e "$(pccolor $percentInt)$used\x1b[0m / $total"
 }
 
 function ponyget_Containers()
@@ -149,8 +132,12 @@ function ponyget_Containers()
 
 function ponyget_IP()
 {
-    [ -z "$1" ] && inet="inet" || inet="$1"
-    ip -o addr | grep -vE "lo\s+inet" | grep -F "$IP_INTERFACE" | grep -Po "$inet\s+\K[^/]+" | xargs echo
+    if [ -z "$1" ]; then
+        inet="inet"
+    else
+        inet="$1"
+    fi
+    ifconfig $IP_INTERFACE | awk "/$inet /{print \$2}"
 }
 
 function ponyget_IPv6()
@@ -218,18 +205,10 @@ function select_info()
     INFO=($(echo "${*}" | column -t -s:,))
 }
 
-SELFDIR=$(dirname $(readlink -se "${BASH_SOURCE[0]}"))
+SELFDIR="~/systempony/"
 function get_data_file()
 {
-    if [ -e "$SELFDIR/$1" ]
-    then
-        # Not installed
-        echo "$SELFDIR/$1"
-    elif [ -e "$SELFDIR/../share/ascii-pony/$1" ]
-    then
-        # Installed with PREFIX=$SELFDIR/..
-        echo "$SELFDIR/../share/ascii-pony/$1"
-    fi
+    echo "/home/jimm/systempony/$1"
 }
 
 # Returns the number of displayed characters, ignoring color codes
@@ -241,14 +220,14 @@ function strlen_color()
 # Truncates a string
 function truncate_color()
 {
-    local length="$(strlen_color "$1")"
-    local target="$2"
-    if [ "$length" -gt "$target" ]
-    then
-        let cut="$target-$length"
-        echo -n "$1" | head -c $cut
-        return
-    fi
+    # local length="$(strlen_color "$1")"
+    # local target="$2"
+    # if [ "$length" -gt "$target" ]
+    # then
+    #     let cut="$length-$target"
+    #     echo -n "$1" | sed "s/.\{$cut\}$//"
+    #     return
+    # fi
     echo "$1"
 }
 
@@ -332,7 +311,7 @@ else
     ponyfile="$ponydir/$PONY.ansi"
     if [ -n "$ponydir" -a '(' \! -f "$ponyfile" -o "$PONY" = random ')' ]
     then
-        ponyfile="$(find "$ponydir" -name '*.ansi' | shuf | head -n 1)"
+        ponyfile="$(find "$ponydir" -name '*.ansi' | shuffle | head -n 1)"
     fi
 fi
 
@@ -368,7 +347,8 @@ info_firsty[twilight-alicorn]=10
 
 if [ -f "$ponyfile" ]
 then
-    lines=$(cat "$ponyfile" | wc -l) # cat to avoid printing file name
+    lines=$(cat "$ponyfile" | wc -l | awk '{$1=$1};1') # cat to avoid printing file name
+    #echo "lines: $lines"
     let info_index=0
     COLUMNS=$(tput cols || echo 1024)
 
@@ -382,17 +362,19 @@ then
 
     if [ "${info_firsty[$PONY]}" ]
     then
+        #echo "condition 1"
         start_line=${info_firsty[$PONY]}
     else
+        #echo "condition 2"
         let start_line=($lines-${#INFO[@]})/2
     fi
 
-
+    #echo "start line: $start_line"
 
     let current_line=1
     while IFS= read -r  line
     do
-        if [ $info_index -lt ${#INFO[@]} -a $current_line -ge $start_line ]
+        if ((info_index < ${#INFO[@]} && current_line >= start_line))
         then
             let msgsize="$COLUMNS - $info_x - $info_key_max_length - 4"
             line="$(truncate_color "$line" $info_x)"
